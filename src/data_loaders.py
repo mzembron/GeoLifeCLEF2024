@@ -1,21 +1,24 @@
 from pathlib import Path
+import warnings
+import numpy as np
 import pandas as pd
 import torch
 from torchvision.io import read_image
 import glob
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class MultimodalDataset(Dataset):
     def __init__(self, 
-                 root_dir='../data',
-                 metadata_path='../data/PresenceAbsenceSurveys/GLC24-PA-metadata-train.csv',
+                 root_dir='./data',
+                 metadata_path='./data/PresenceAbsenceSurveys/GLC24-PA-metadata-train.csv',
                  environmental_dir='EnvironmentalRasters',
                  image_dir='SatellitePatches',
                  timeseries_dir='SatelliteTimeSeries',
                  id_column='surveyId',
                  transform=None):
-  
+
         dataset_name = '-'.join(s for i, s in enumerate(Path(metadata_path).stem.split('-')) if i in (1,3))
         csv_files = glob.glob(f'{root_dir}/{environmental_dir}/*/*{dataset_name}*.csv')
 
@@ -53,13 +56,14 @@ class MultimodalDataset(Dataset):
             'image_rgb': read_image(image_nir),
             'features': torch.tensor(sample, dtype=torch.float),  # Soilgrid [0-8], HumanFootprint[9-24], Bio [25-43], Landcover[44], Elevation[45]
             'timeseries': torch.load(timeseries),
-            'species': torch.tensor(survey['speciesId'], dtype=torch.int32), #TODO: if no species don't raise error
+            'species': torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
+            # 'species': torch.tensor(survey['speciesId'], dtype=torch.int32), #TODO: if no species don't raise error
         }
         return sample_dict
 
     def _read_metadata(self, path):
         df = pd.read_csv(path)
-
+        self.classes = np.sort(np.array(df['speciesId'].unique().tolist()))
         df = (df.groupby(['surveyId', 'lat', 'lon',])
                 .agg({'geoUncertaintyInM': 'max', 'speciesId': lambda x: x.tolist(),})
                 .reset_index())
@@ -75,10 +79,19 @@ class MultimodalDataset(Dataset):
         return merged_data
 
 
+def custom_collate(batch):
+    return {key: [sample[key] for sample in batch] for key in batch[0]}
+
 
 if __name__ == "__main__":
     dataset = MultimodalDataset()
-    for i, x in enumerate(dataset):
-        if i == 2:
-            print(x)
-            break
+    # for i, x in enumerate(dataset):
+    #     if i == 2:
+    #         print(x)
+    #         break
+    dataloader = DataLoader(dataset, batch_size=4,
+                        shuffle=True, num_workers=0, collate_fn=custom_collate)
+    for i_batch, sample_batched in enumerate(dataloader):
+        print(i_batch, sample_batched)
+        # print(type(sample_batched))
+        break
