@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.optim as optim
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from data_loaders import MultimodalDataset, custom_collate
 from lightning import LightningModule, Trainer
 
@@ -25,18 +25,37 @@ class CLEFdummy(LightningModule):
 
     def forward(self, features):
         return self.model(features)
-
-    def training_step(self, batch, batch_idx):
+    
+    def _prepare_input(self, batch):
         features = torch.stack(batch['features']).nan_to_num()
         species = torch.stack(batch['species'])
+        return features, species
 
-        outputs = self.forward(features)
 
-        loss = self.loss(outputs, species)
+    def training_step(self, batch, batch_idx):
+        x, y = self._prepare_input(batch)
+
+        outputs = self.forward(x)
+
+        loss = self.loss(outputs, y)
 
         # self.print_predictions(batch, self.global_step)
-        self.log(f"loss", loss.item(), prog_bar=True, on_step=True, logger=True)
+        self.log(f"train_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
         return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, y = self._prepare_input(batch)
+        outputs = self.forward(x)
+        loss = self.loss(outputs, y)
+        self.log(f"valid_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        #TODO: add different metrics
+
+    def test_step(self, batch, batch_idx):
+        x, y = self._prepare_input(batch)
+        outputs = self.forward(x)
+        loss = self.loss(outputs, y)
+        self.log(f"test_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        #TODO: add different metrics
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
@@ -45,9 +64,10 @@ class CLEFdummy(LightningModule):
 
 if __name__ == "__main__":
     dataset = MultimodalDataset()
-    dataloader = DataLoader(dataset, batch_size=64,
-                        shuffle=True, num_workers=2, collate_fn=custom_collate)
+    trainset, validset = random_split(dataset, [0.8, 0.2])
+    trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
+    validloader = DataLoader(validset, batch_size=64, shuffle=False, num_workers=2, collate_fn=custom_collate)
     model = CLEFdummy()
     trainer = Trainer(max_epochs=100, accelerator='gpu')
-    trainer.fit(model=model, train_dataloaders=dataloader)
+    trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=validloader)
     
