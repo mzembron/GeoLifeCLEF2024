@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import torch
-from torchvision.io import read_image
+from torchvision.io import read_image, ImageReadMode
 import glob
 from torch.utils.data import Dataset, DataLoader
 
@@ -17,7 +17,7 @@ class MultimodalDataset(Dataset):
                  image_dir='SatellitePatches',
                  timeseries_dir='SatelliteTimeSeries',
                  id_column='surveyId',
-                 transform=None):
+                 transforms=None):
 
         dataset_name = '-'.join(s for i, s in enumerate(Path(metadata_path).stem.split('-')) if i in (1,3))
         csv_files = glob.glob(f'{root_dir}/{environmental_dir}/*/*{dataset_name}*.csv')
@@ -27,7 +27,7 @@ class MultimodalDataset(Dataset):
         self.image_dirs = glob.glob(f'{root_dir}/{image_dir}/*{dataset_name[:4].upper()}{dataset_name[4:]}*/[!_]*')
 
         self.timeseries_dir = Path(glob.glob(f'{root_dir}/{timeseries_dir}/cubes/*{dataset_name}*[!.zip]')[0])
-        self.transform = transform
+        self.transforms = transforms  # TODO: convert transform into separate parameters
 
     def __len__(self):
         return len(self.tabdata)
@@ -52,8 +52,8 @@ class MultimodalDataset(Dataset):
         sample_dict = {
             'survey_id': survey_id,
             'metadata': torch.tensor(survey.drop('speciesId'), dtype=torch.float), # lat, lon, geoUncertaintyInM
-            'image_nir': read_image(image_rgb),
-            'image_rgb': read_image(image_nir),
+            'image_nir': self.transforms[1](read_image(image_nir, ImageReadMode.GRAY)),  
+            'image_rgb': self.transforms[0](read_image(image_rgb)),
             'features': torch.tensor(sample, dtype=torch.float),  # Soilgrid [0-8], HumanFootprint[9-24], Bio [25-43], Landcover[44], Elevation[45]
             'timeseries': torch.load(timeseries),
             'species': torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
@@ -80,6 +80,7 @@ class MultimodalDataset(Dataset):
 
 
 def custom_collate(batch):
+    # TODO: move torch.stack here
     return {key: [sample[key] for sample in batch] for key in batch[0]}
 
 
