@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch
 from torch.utils.data import DataLoader, random_split
+from torcheval.metrics.functional import multilabel_accuracy
 from torchvision.transforms import v2
 from torchvision.models import vit_b_32, ViT_B_32_Weights
 from data_loaders import MultimodalDataset, custom_collate
@@ -53,7 +54,20 @@ class CLEFdummy(LightningModule):
         outputs = self.forward(x)
         loss = self.loss(outputs, y)
         self.log(f"valid_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
-        # TODO: add different metrics
+        
+        F1 = self.F1_score(outputs, y)
+        self.log(f"valid_F1", F1.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+
+    def F1_score(self, preds, targets):
+        threshold = 0.5
+        preds = nn.Sigmoid()(preds)
+        preds = torch.where(preds < threshold, 0, 1)
+        TP = torch.logical_and(preds == targets, targets == 1).sum(dim=1)
+        FP = torch.logical_and(preds != targets, preds == 1).sum(dim=1)
+        FN = torch.logical_and(preds != targets, preds == 0).sum(dim=1)
+
+        F1 = TP/(TP+(FP+FN)/2)
+        return F1.mean()
 
     def test_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
