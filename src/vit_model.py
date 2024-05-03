@@ -47,8 +47,6 @@ class CLEFdummy(LightningModule):
         images = torch.cat((torch.stack(batch['image_rgb']),torch.stack(batch['image_nir'])), dim=1)
         # images = torch.stack(batch['image_rgb'])
 
-        if species:
-            species = torch.stack(species)
         return images, species
 
     def training_step(self, batch, batch_idx):

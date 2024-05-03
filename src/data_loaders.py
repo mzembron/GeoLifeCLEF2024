@@ -94,7 +94,7 @@ def custom_collate(batch):
     # TODO: move torch.stack here
     dicts, tensors = zip(*batch)
     col_dicts = {key: [sample[key] for sample in dicts] for key in dicts[0]}
-    batch_tensor = torch.stack(tensors) if tensors[0] else None
+    batch_tensor = torch.stack(tensors) if isinstance(tensors[0], torch.Tensor) else None
     return col_dicts, batch_tensor
 
 
