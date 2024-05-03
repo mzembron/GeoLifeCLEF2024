@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+
 class MultimodalDataset(Dataset):
     def __init__(self, 
                  root_dir='./data',
@@ -51,22 +52,32 @@ class MultimodalDataset(Dataset):
 
         sample_dict = {
             'survey_id': survey_id,
-            'metadata': torch.tensor(survey.drop('speciesId'), dtype=torch.float), # lat, lon, geoUncertaintyInM
-            'image_nir': self.transforms[1](read_image(image_nir, ImageReadMode.GRAY)),  
+            'metadata': torch.tensor(survey.drop('speciesId', errors='ignore'), dtype=torch.float),  # lat, lon, geoUncertaintyInM
+            'image_nir': self.transforms[1](read_image(image_nir, ImageReadMode.GRAY)),
             'image_rgb': self.transforms[0](read_image(image_rgb)),
             'features': torch.tensor(sample, dtype=torch.float),  # Soilgrid [0-8], HumanFootprint[9-24], Bio [25-43], Landcover[44], Elevation[45]
             'timeseries': torch.load(timeseries),
-            'species': torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
+            # 'species': torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
             # 'species': torch.tensor(survey['speciesId'], dtype=torch.int32), #TODO: if no species don't raise error
         }
-        return sample_dict
+        if 'speciesId' in survey.index:
+            classes = torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
+        else:
+            classes = None
+        return sample_dict, classes
 
     def _read_metadata(self, path):
         df = pd.read_csv(path)
-        self.classes = np.sort(np.array(df['speciesId'].unique().tolist()))
-        df = (df.groupby(['surveyId', 'lat', 'lon',])
-                .agg({'geoUncertaintyInM': 'max', 'speciesId': lambda x: x.tolist(),})
-                .reset_index())
+        if 'speciesId' in df.columns:
+            self.classes = np.sort(np.array(df['speciesId'].unique().tolist()))
+            df = (df.groupby(['surveyId', 'lat', 'lon',])
+                    .agg({'geoUncertaintyInM': 'max', 'speciesId': lambda x: x.tolist(),})
+                    .reset_index())
+        else:
+            self.classes = None
+            df = (df.groupby(['surveyId', 'lat', 'lon',])
+                    .agg({'geoUncertaintyInM': 'max'})
+                    .reset_index())
         return df.set_index('surveyId')
 
     def _merge_data(self, csv_files, id_column):
@@ -81,7 +92,10 @@ class MultimodalDataset(Dataset):
 
 def custom_collate(batch):
     # TODO: move torch.stack here
-    return {key: [sample[key] for sample in batch] for key in batch[0]}
+    dicts, tensors = zip(*batch)
+    col_dicts = {key: [sample[key] for sample in dicts] for key in dicts[0]}
+    batch_tensor = torch.stack(tensors) if tensors[0] else None
+    return col_dicts, batch_tensor
 
 
 if __name__ == "__main__":

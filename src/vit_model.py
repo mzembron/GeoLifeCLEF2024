@@ -42,10 +42,13 @@ class CLEFdummy(LightningModule):
         return self.model(features)
 
     def _prepare_input(self, batch):
+        batch, species = batch
         features = torch.stack(batch['features']).nan_to_num()
         images = torch.cat((torch.stack(batch['image_rgb']),torch.stack(batch['image_nir'])), dim=1)
         # images = torch.stack(batch['image_rgb'])
-        species = torch.stack(batch['species'])
+
+        if species:
+            species = torch.stack(species)
         return images, species
 
     def training_step(self, batch, batch_idx):
@@ -89,6 +92,14 @@ class CLEFdummy(LightningModule):
         loss = self.loss(outputs, y)
         self.log(f"test_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
         # TODO: add different metrics
+
+    def predict_step(self, batch, batch_idx):
+        x, y = self._prepare_input(batch)
+        preds =self.forward(x)
+        threshold = 0.3
+        preds = nn.Sigmoid()(preds)
+        preds = torch.where(preds < threshold, 0, 1)
+        return preds
 
     def configure_optimizers(self):
         optimizer = optim.AdamW(self.parameters(), lr=1e-4)
