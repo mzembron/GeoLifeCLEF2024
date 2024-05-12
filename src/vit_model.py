@@ -1,10 +1,11 @@
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch
 from torch.utils.data import DataLoader, random_split
 from torchvision.transforms import v2
 from torchvision.ops import focal_loss
-from torchvision.models import vit_b_32, ViT_B_32_Weights
+from torchvision.models import vit_b_32, ViT_B_32_Weights, resnet18
 from data_loaders import MultimodalDataset, custom_collate
 from lightning import LightningModule, Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -14,22 +15,25 @@ from collections import OrderedDict
 class CLEFdummy(LightningModule):
     def __init__(self):
         super().__init__()
-        self.model = vit_b_32(
+        self.vit = vit_b_32(
             weights=ViT_B_32_Weights.DEFAULT,
             dropout=0.3)
         # for param in self.model.parameters():
         #     param.requires_grad = False
-        self.model.conv_proj = nn.Conv2d(4, 768, kernel_size=(32,32), stride=(32,32))
-        # self.model.heads.head = nn.Linear(768, 5016, bias=True)
-
-        self.model.heads = nn.Sequential(OrderedDict([
+        self.vit.conv_proj = nn.Conv2d(4, 768, kernel_size=(32,32), stride=(32,32))
+        self.vit.heads = nn.Sequential(OrderedDict([
             ('head', nn.Linear(768, 2048, bias=True)),
             # nn.ReLU(),
             # nn.Linear(2048, 5016, bias=True)
             ('scale', nn.Sigmoid()) # make sure the range is the same for image and numerical features
         ]))
+
+        self.res_norm = nn.LayerNorm([4,19,12])
+        self.res = resnet18(num_classes=256)
+        self.res.conv1 = nn.Conv2d(4, 64, kernel_size=3, padding=1, bias=False)
+
         self.classifier = nn.Sequential(
-            nn.Linear(self.model.heads.head.out_features + 46, 4096),
+            nn.Linear(self.vit.heads.head.out_features + self.res.fc.out_features + 49, 4096),
             nn.ReLU(),
             nn.Linear(4096, 5016, bias=True)
         )
@@ -47,20 +51,29 @@ class CLEFdummy(LightningModule):
                                                 reduction='sum')
 
     def forward(self, features):
-        images, features = features
+        images, features, biomonthly = features
 
-        image_out = self.model(images)
-        x = torch.cat([image_out, features], dim=1)
+        image_out = self.vit(images)
+
+        bio_out = self.res_norm(biomonthly)
+        bio_out = self.res(bio_out)
+        x = torch.cat([image_out, bio_out, features], dim=1)
 
         return self.classifier(x)
 
     def _prepare_input(self, batch):
         batch, species = batch
+
         features = torch.stack(batch['features']).nan_to_num()
+        meta = torch.stack(batch['metadata']).nan_to_num()
+        features = torch.cat((features, meta), dim=1)
+
         images = torch.cat((torch.stack(batch['image_rgb']), torch.stack(batch['image_nir'])), dim=1)
+
+        biomonthly = torch.stack(batch['biomonthly']).nan_to_num()
         # images = torch.stack(batch['image_rgb'])
 
-        return (images, features), species
+        return (images, features, biomonthly), species
 
     def training_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
@@ -118,12 +131,26 @@ class CLEFdummy(LightningModule):
         return preds
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-4)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=6, gamma=0.1)
+        optimizer = optim.AdamW(self.parameters(), lr=1e-3)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         return {'optimizer': optimizer, 'lr_scheduler': {'scheduler': scheduler}}
 
 
+def set_seed(seed):
+    # Set seed for Python's built-in random number generator
+    torch.manual_seed(seed)
+    # Set seed for numpy
+    np.random.seed(seed)
+    # Set seed for CUDA if available
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        # Set cuDNN's random number generator seed for deterministic behavior
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
 if __name__ == "__main__":
+    set_seed(47)
     checkpoint_callback = ModelCheckpoint(
         monitor='valid_F1',
         mode='max',

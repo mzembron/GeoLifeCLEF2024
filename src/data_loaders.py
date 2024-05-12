@@ -18,6 +18,7 @@ class MultimodalDataset(Dataset):
                  environmental_dir='EnvironmentalRasters',
                  image_dir='SatellitePatches',
                  timeseries_dir='SatelliteTimeSeries',
+                 biomonthly_dir='EnvironmentalRasters/Climate/Climatic_Monthly_2000-2019_cubes',
                  id_column='surveyId',
                  transforms=None,
                  meta_scaler_path=None,
@@ -34,6 +35,7 @@ class MultimodalDataset(Dataset):
         self.image_dirs = glob.glob(f'{root_dir}/{image_dir}/*{dataset_name[:4].upper()}{dataset_name[4:]}*/[!_]*')
 
         self.timeseries_dir = Path(glob.glob(f'{root_dir}/{timeseries_dir}/cubes/*{dataset_name}*[!.zip]')[0])
+        self.biomonthly_dir = Path(glob.glob(f'{root_dir}/{biomonthly_dir}/*{dataset_name}*[!.zip]/*{dataset_name}*')[0])
         self.transforms = transforms  # TODO: convert transform into separate parameters
 
     def __len__(self):
@@ -55,6 +57,7 @@ class MultimodalDataset(Dataset):
                 image_nir = f'{d}/{cd}/{ab}/{survey_id}.jpeg'
 
         timeseries = f'{self.timeseries_dir}/{self.timeseries_dir.stem}_{survey_id}_cube.pt'
+        biomonthly = f'{self.biomonthly_dir}/{self.biomonthly_dir.stem}_{survey_id}_cube.pt'
 
         sample_dict = {
             'survey_id': survey_id,
@@ -63,8 +66,7 @@ class MultimodalDataset(Dataset):
             'image_rgb': self.transforms[0](read_image(image_rgb)),
             'features': torch.tensor(sample, dtype=torch.float),  # Soilgrid [0-8], HumanFootprint[9-24], Bio [25-43], Landcover[44], Elevation[45]
             'timeseries': torch.load(timeseries),
-            # 'species': torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
-            # 'species': torch.tensor(survey['speciesId'], dtype=torch.int32), #TODO: if no species don't raise error
+            'biomonthly': torch.load(biomonthly)
         }
         if 'speciesId' in survey.index:
             classes = torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
