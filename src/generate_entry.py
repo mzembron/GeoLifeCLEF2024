@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 if __name__ == "__main__":
-    chckpt = 'lightning_logs/version_123/checkpoints/best_model-epoch=11-valid_F1=0.18.ckpt'
+    chckpt = 'lightning_logs/version_136/checkpoints/best_model-epoch=07-valid_F1=0.20.ckpt'
     model = CLEFdummy.load_from_checkpoint(chckpt)
     model.eval()
 
@@ -24,9 +24,14 @@ if __name__ == "__main__":
     ])
 
     trainset = MultimodalDataset()
-    dataset = MultimodalDataset(metadata_path='data/PresenceAbsenceSurveys/GLC24-PA-metadata-test.csv',transforms=[transform_rgb, transform_nir])
+    dataset = MultimodalDataset(
+        metadata_path='data/PresenceAbsenceSurveys/GLC24-PA-metadata-test.csv',
+        transforms=[transform_rgb, transform_nir],
+        meta_scaler_path='metadata_scaler.pkl',
+        tab_scaler_path='feature_scaler.pkl')
     testloader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=2, collate_fn=custom_collate)
 
+    model.top_k = 25
     trainer = Trainer(accelerator='gpu')
     predictions = trainer.predict(model=model, dataloaders=testloader)
 
@@ -38,5 +43,5 @@ if __name__ == "__main__":
         return ' '.join(row.index[row == 1].astype(str))
 
     df['predictions'] = df.apply(aggregate_columns, axis=1)
-    df['predictions'].to_csv('predictions_vit_rgb+nir_best.csv')
+    df['predictions'].to_csv('predictions_vit_rgb+nir+env_best_top25.csv')
     pass

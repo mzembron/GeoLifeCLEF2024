@@ -8,7 +8,7 @@ from torchvision.models import vit_b_32, ViT_B_32_Weights
 from data_loaders import MultimodalDataset, custom_collate
 from lightning import LightningModule, Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
-
+from collections import OrderedDict
 
 
 class CLEFdummy(LightningModule):
@@ -22,14 +22,22 @@ class CLEFdummy(LightningModule):
         self.model.conv_proj = nn.Conv2d(4, 768, kernel_size=(32,32), stride=(32,32))
         # self.model.heads.head = nn.Linear(768, 5016, bias=True)
 
-        self.model.heads.head = nn.Sequential(
-            nn.Linear(768, 2048, bias=True),
+        self.model.heads = nn.Sequential(OrderedDict([
+            ('head', nn.Linear(768, 2048, bias=True)),
+            # nn.ReLU(),
+            # nn.Linear(2048, 5016, bias=True)
+            ('scale', nn.Sigmoid()) # make sure the range is the same for image and numerical features
+        ]))
+        self.classifier = nn.Sequential(
+            nn.Linear(self.model.heads.head.out_features + 46, 4096),
             nn.ReLU(),
-            nn.Linear(2048, 5016, bias=True)
+            nn.Linear(4096, 5016, bias=True)
         )
         # self.loss = nn.BCEWithLogitsLoss()
         self.focal_loss_gamma = 5 # TODO check gamma = 5
         self.focal_loss_alpha = 0.25
+
+        self.top_k = None
 
     def loss(self, outputs, y):
         return focal_loss.sigmoid_focal_loss(outputs,
@@ -39,15 +47,20 @@ class CLEFdummy(LightningModule):
                                                 reduction='sum')
 
     def forward(self, features):
-        return self.model(features)
+        images, features = features
+
+        image_out = self.model(images)
+        x = torch.cat([image_out, features], dim=1)
+
+        return self.classifier(x)
 
     def _prepare_input(self, batch):
         batch, species = batch
         features = torch.stack(batch['features']).nan_to_num()
-        images = torch.cat((torch.stack(batch['image_rgb']),torch.stack(batch['image_nir'])), dim=1)
+        images = torch.cat((torch.stack(batch['image_rgb']), torch.stack(batch['image_nir'])), dim=1)
         # images = torch.stack(batch['image_rgb'])
 
-        return images, species
+        return (images, features), species
 
     def training_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
@@ -57,17 +70,17 @@ class CLEFdummy(LightningModule):
         loss = self.loss(outputs, y)
 
         # self.print_predictions(batch, self.global_step)
-        self.log(f"train_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        self.log(f"train_loss", loss.item(), prog_bar=True, on_step=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
         outputs = self.forward(x)
         loss = self.loss(outputs, y)
-        self.log(f"valid_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        self.log(f"valid_loss", loss.item(), prog_bar=True, on_step=True, logger=True)
 
         F1 = self.F1_score(outputs, y)
-        self.log(f"valid_F1", F1.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        self.log(f"valid_F1", F1.item(), prog_bar=True, on_step=True, logger=True)
 
     def F1_score(self, preds, targets):
         threshold = 0.3
@@ -77,9 +90,9 @@ class CLEFdummy(LightningModule):
         FP = torch.logical_and(preds != targets, preds == 1).sum(dim=1)
         FN = torch.logical_and(preds != targets, preds == 0).sum(dim=1)
 
-        self.log(f"valid_TP", TP.sum().item(), prog_bar=True, on_step=True, logger=True)
-        self.log(f"valid_FP", FP.sum().item(), prog_bar=True, on_step=True, logger=True)
-        self.log(f"valid_FN", FN.sum().item(), prog_bar=True, on_step=True, logger=True)
+        self.log(f"valid_TP", TP.sum().item(), on_step=True, logger=True)
+        self.log(f"valid_FP", FP.sum().item(), on_step=True, logger=True)
+        self.log(f"valid_FN", FN.sum().item(), on_step=True, logger=True)
 
         F1 = TP/(TP+(FP+FN)/2)
         return F1.mean()
@@ -88,14 +101,19 @@ class CLEFdummy(LightningModule):
         x, y = self._prepare_input(batch)
         outputs = self.forward(x)
         loss = self.loss(outputs, y)
-        self.log(f"test_loss", loss.item(), prog_bar=True, on_step=True, logger=True, batch_size=x.shape[0])
+        self.log(f"test_loss", loss.item(), on_step=True, logger=True)
         # TODO: add different metrics
 
     def predict_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
-        preds =self.forward(x)
+        preds = self.forward(x)
         threshold = 0.3
         preds = nn.Sigmoid()(preds)
+        if self.top_k:
+            _, top_indices = torch.topk(preds, k=self.top_k, dim=1)
+            mask = torch.zeros_like(preds)
+            mask.scatter_(1, top_indices, 1)
+            preds = preds * mask
         preds = torch.where(preds < threshold, 0, 1)
         return preds
 

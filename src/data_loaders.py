@@ -6,6 +6,7 @@ import torch
 from torchvision.io import read_image, ImageReadMode
 import glob
 from torch.utils.data import Dataset, DataLoader
+import pickle
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -18,13 +19,18 @@ class MultimodalDataset(Dataset):
                  image_dir='SatellitePatches',
                  timeseries_dir='SatelliteTimeSeries',
                  id_column='surveyId',
-                 transforms=None):
+                 transforms=None,
+                 meta_scaler_path=None,
+                 tab_scaler_path=None):
 
         dataset_name = '-'.join(s for i, s in enumerate(Path(metadata_path).stem.split('-')) if i in (1,3))
         csv_files = glob.glob(f'{root_dir}/{environmental_dir}/*/*{dataset_name}*.csv')
 
+        self.meta_scaler_path = meta_scaler_path
+        self.tab_scaler_path = tab_scaler_path
         self.metadata = self._read_metadata(metadata_path)
         self.tabdata = self._merge_data(csv_files, id_column)
+
         self.image_dirs = glob.glob(f'{root_dir}/{image_dir}/*{dataset_name[:4].upper()}{dataset_name[4:]}*/[!_]*')
 
         self.timeseries_dir = Path(glob.glob(f'{root_dir}/{timeseries_dir}/cubes/*{dataset_name}*[!.zip]')[0])
@@ -78,7 +84,11 @@ class MultimodalDataset(Dataset):
             df = (df.groupby(['surveyId', 'lat', 'lon',])
                     .agg({'geoUncertaintyInM': 'max'})
                     .reset_index())
-        return df.set_index('surveyId')
+        df = df.set_index('surveyId')
+        df[df.drop(columns='speciesId', errors='ignore').columns], metadata_scaler = self._scale(df.drop(columns='speciesId', errors='ignore'), self.meta_scaler_path)
+        with open('metadata_scaler.pkl', 'wb') as f:
+            pickle.dump(metadata_scaler, f)
+        return df
 
     def _merge_data(self, csv_files, id_column):
         data_frames = [pd.read_csv(file).set_index(id_column) for file in csv_files]
@@ -87,7 +97,25 @@ class MultimodalDataset(Dataset):
         for df in data_frames[1:]:
             merged_data = pd.merge(merged_data, df, left_index=True, right_index=True)
 
+        merged_data, feature_scaler = self._scale(merged_data, self.tab_scaler_path)
+        with open('feature_scaler.pkl', 'wb') as f:
+            pickle.dump(feature_scaler, f)
         return merged_data
+
+    def _scale(self, df, scaler_path):
+        df = df.replace(np.NINF, np.nan)
+
+        if scaler_path:
+            with open(scaler_path, 'rb') as f:
+                scaler = pickle.load(f)
+            df[df.columns] = scaler.transform(df)
+        else:
+            from sklearn.preprocessing import MinMaxScaler
+            scaler = MinMaxScaler()
+            df[df.columns] = scaler.fit_transform(df)
+
+        df = df.fillna(df.mean())
+        return df, scaler
 
 
 def custom_collate(batch):
@@ -99,13 +127,20 @@ def custom_collate(batch):
 
 
 if __name__ == "__main__":
-    dataset = MultimodalDataset()
-    # for i, x in enumerate(dataset):
-    #     if i == 2:
-    #         print(x)
-    #         break
-    dataloader = DataLoader(dataset, batch_size=4,
-                        shuffle=True, num_workers=0, collate_fn=custom_collate)
+    from torchvision.transforms import v2
+    transform_rgb = v2.Compose([
+        v2.Resize((224, 224)),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    transform_nir = v2.Compose([
+        v2.Resize((224, 224)),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=[0.485], std=[0.229])
+    ])
+
+    dataset = MultimodalDataset(transforms=[transform_rgb, transform_nir])
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0, collate_fn=custom_collate)
     for i_batch, sample_batched in enumerate(dataloader):
         print(i_batch, sample_batched)
         # print(type(sample_batched))
