@@ -32,8 +32,12 @@ class CLEFdummy(LightningModule):
         self.res = resnet18(num_classes=256)
         self.res.conv1 = nn.Conv2d(4, 64, kernel_size=3, padding=1, bias=False)
 
+        self.res_landsat_norm = nn.LayerNorm([6,4,21])
+        self.res_landsat = resnet18(num_classes=256)
+        self.res_landsat.conv1 = nn.Conv2d(6, 64, kernel_size=3, padding=1, bias=False)
+
         self.classifier = nn.Sequential(
-            nn.Linear(self.vit.heads.head.out_features + self.res.fc.out_features + 49, 4096),
+            nn.Linear(self.vit.heads.head.out_features + self.res.fc.out_features + self.res_landsat.fc.out_features + 49, 4096),
             nn.ReLU(),
             nn.Linear(4096, 5016, bias=True)
         )
@@ -51,13 +55,17 @@ class CLEFdummy(LightningModule):
                                                 reduction='sum')
 
     def forward(self, features):
-        images, features, biomonthly = features
+        images, features, biomonthly, landsat = features
 
         image_out = self.vit(images)
 
         bio_out = self.res_norm(biomonthly)
         bio_out = self.res(bio_out)
-        x = torch.cat([image_out, bio_out, features], dim=1)
+
+        landsat_out = self.res_landsat_norm(landsat)
+        landsat_out = self.res_landsat(landsat_out)
+
+        x = torch.cat([image_out, bio_out, landsat_out, features], dim=1)
 
         return self.classifier(x)
 
@@ -71,9 +79,10 @@ class CLEFdummy(LightningModule):
         images = torch.cat((torch.stack(batch['image_rgb']), torch.stack(batch['image_nir'])), dim=1)
 
         biomonthly = torch.stack(batch['biomonthly']).nan_to_num()
+        landsat = torch.stack(batch['landsat']).nan_to_num()
         # images = torch.stack(batch['image_rgb'])
 
-        return (images, features, biomonthly), species
+        return (images, features, biomonthly, landsat), species
 
     def training_step(self, batch, batch_idx):
         x, y = self._prepare_input(batch)
@@ -176,7 +185,7 @@ if __name__ == "__main__":
     trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
     validloader = DataLoader(validset, batch_size=64, shuffle=False, num_workers=2, collate_fn=custom_collate)
     model = CLEFdummy()
-    trainer = Trainer(max_epochs=100, accelerator='gpu', callbacks=[checkpoint_callback])
+    trainer = Trainer(max_epochs=50, accelerator='gpu', callbacks=[checkpoint_callback])
     trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=validloader)
 
     # chckpt = 'lightning_logs/version_95/checkpoints/epoch=1-step=2782.ckpt'
