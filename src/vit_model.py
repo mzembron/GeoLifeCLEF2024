@@ -179,14 +179,19 @@ if __name__ == "__main__":
         v2.Normalize(mean=[0.485], std=[0.229])
     ])
 
-    dataset = MultimodalDataset(transforms=[transform_rgb, transform_nir])
+    pa_dataset = MultimodalDataset(transforms=[transform_rgb, transform_nir])
+    po_dataset = MultimodalDataset(transforms=[transform_rgb, transform_nir])
+    trainset, validset = random_split(pa_dataset, [0.8, 0.2])
 
-    trainset, validset = random_split(dataset, [0.8, 0.2])
-    trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
+    pa_trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
+    po_trainloader = DataLoader(po_dataset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
     validloader = DataLoader(validset, batch_size=64, shuffle=False, num_workers=2, collate_fn=custom_collate)
-    model = CLEFdummy()
+
+    model_chkpt = 'models/v_143_F1-0-32/best_model-epoch=15-valid_F1=0.28.ckpt'
+    # model = CLEFdummy()
+    model = CLEFdummy.load_from_checkpoint(model_chkpt)
     trainer = Trainer(max_epochs=50, accelerator='gpu', callbacks=[checkpoint_callback])
-    trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=validloader)
+    trainer.fit(model=model, train_dataloaders=po_trainloader, val_dataloaders=validloader)
 
     # chckpt = 'lightning_logs/version_95/checkpoints/epoch=1-step=2782.ckpt'
     # model = CLEFdummy.load_from_checkpoint(chckpt)
