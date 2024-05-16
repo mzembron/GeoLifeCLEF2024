@@ -1,12 +1,14 @@
-from pathlib import Path
+import pickle
 import warnings
+import glob
+import torch
 import numpy as np
 import pandas as pd
-import torch
+
 from torchvision.io import read_image, ImageReadMode
-import glob
 from torch.utils.data import Dataset, DataLoader
-import pickle
+
+from pathlib import Path
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -121,14 +123,13 @@ class MultimodalDataset(Dataset):
 
 
 def custom_collate(batch):
-    # TODO: move torch.stack here
     dicts, tensors = zip(*batch)
     col_dicts = {key: [sample[key] for sample in dicts] for key in dicts[0]}
     batch_tensor = torch.stack(tensors) if isinstance(tensors[0], torch.Tensor) else None
     return col_dicts, batch_tensor
 
 
-if __name__ == "__main__":
+def get_transforms():
     from torchvision.transforms import v2
     transform_rgb = v2.Compose([
         v2.Resize((224, 224)),
@@ -140,10 +141,13 @@ if __name__ == "__main__":
         v2.ToDtype(torch.float32, scale=True),
         v2.Normalize(mean=[0.485], std=[0.229])
     ])
+    return [transform_rgb, transform_nir]
 
-    dataset = MultimodalDataset(transforms=[transform_rgb, transform_nir])
+
+if __name__ == "__main__":
+    dataset = MultimodalDataset(transforms=get_transforms())
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0, collate_fn=custom_collate)
+
     for i_batch, sample_batched in enumerate(dataloader):
         print(i_batch, sample_batched)
-        # print(type(sample_batched))
         break

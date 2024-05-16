@@ -1,5 +1,5 @@
-from vit_model import CLEFdummy
-from data_loaders import MultimodalDataset, custom_collate
+from clef_model import CLEFModel
+from data_loaders import MultimodalDataset, custom_collate, get_transforms
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 from lightning import LightningModule, Trainer
@@ -8,25 +8,14 @@ import pandas as pd
 import numpy as np
 
 if __name__ == "__main__":
-    chckpt = 'lightning_logs/version_136/checkpoints/best_model-epoch=07-valid_F1=0.20.ckpt'
-    model = CLEFdummy.load_from_checkpoint(chckpt)
+    chckpt = 'lightning_logs/version_701531/model/best_model-epoch=15-valid_F1=0.25.ckpt'
+    model = CLEFModel.load_from_checkpoint(chckpt)
     model.eval()
-
-    transform_rgb = v2.Compose([
-        v2.Resize((224, 224)),
-        v2.ToDtype(torch.float32, scale=True),
-        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    transform_nir = v2.Compose([
-        v2.Resize((224, 224)),
-        v2.ToDtype(torch.float32, scale=True),
-        v2.Normalize(mean=[0.485], std=[0.229])
-    ])
 
     trainset = MultimodalDataset()
     dataset = MultimodalDataset(
         metadata_path='data/PresenceAbsenceSurveys/GLC24-PA-metadata-test.csv',
-        transforms=[transform_rgb, transform_nir],
+        transforms=get_transforms(),
         meta_scaler_path='metadata_scaler.pkl',
         tab_scaler_path='feature_scaler.pkl')
     testloader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=2, collate_fn=custom_collate)
@@ -43,5 +32,5 @@ if __name__ == "__main__":
         return ' '.join(row.index[row == 1].astype(str))
 
     df['predictions'] = df.apply(aggregate_columns, axis=1)
-    df['predictions'].to_csv('predictions_vit_rgb+nir+env_best_top25.csv')
+    df['predictions'].to_csv('predictions_vit+2x_rgb+nir+env+landsat_best_lr1e-3_all.csv')
     pass
