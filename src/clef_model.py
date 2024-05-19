@@ -18,6 +18,7 @@ from data_loaders import MultimodalDataset, custom_collate, get_transforms
 
 class CLEFModel(LightningModule):
     def __init__(self,
+                 num_classes,
                  focal_loss_gamma=5,
                  focal_loss_alpha=0.25,
                  prob_threshold=0.3,
@@ -47,7 +48,7 @@ class CLEFModel(LightningModule):
         self.classifier = nn.Sequential(
             nn.Linear(self.vit.heads.head.out_features + self.res.fc.out_features + self.res_landsat.fc.out_features + 49, 4096),
             nn.ReLU(),
-            nn.Linear(4096, 5016, bias=True)
+            nn.Linear(4096, num_classes, bias=True)
         )
 
         self.focal_loss_gamma = focal_loss_gamma
@@ -174,18 +175,21 @@ def define_chkpt():
 if __name__ == "__main__":
     set_seed(47)
     transforms = get_transforms()
-    pa_dataset = MultimodalDataset(transforms=transforms)
-    po_dataset = MultimodalDataset(metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train.csv',
-                                   transforms=transforms)
+    pa_dataset = MultimodalDataset(transforms=transforms,
+                                   classes_path='classes.pkl')
+    po_dataset = MultimodalDataset(metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train-fixed.csv',
+                                   transforms=transforms,
+                                   classes_path='classes.pkl')
     trainset, validset = random_split(pa_dataset, [0.8, 0.2])
 
     pa_trainloader = DataLoader(trainset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
     po_trainloader = DataLoader(po_dataset, batch_size=64, shuffle=True, num_workers=2, collate_fn=custom_collate)
     validloader = DataLoader(validset, batch_size=64, shuffle=False, num_workers=2, collate_fn=custom_collate)
 
-    model_chkpt = 'models/v_143_F1-0-32/best_model-epoch=15-valid_F1=0.28.ckpt'
-    # model = CLEFModel()
-    model = CLEFModel.load_from_checkpoint(model_chkpt)
+    # model_chkpt = 'models/v_143_F1-0-32/best_model-epoch=15-valid_F1=0.28.ckpt'
+    # model = CLEFModel.load_from_checkpoint(model_chkpt)
+
+    model = CLEFModel(num_classes=10358)
 
     trainer = Trainer(max_epochs=50, accelerator='gpu', callbacks=[define_chkpt()])
     trainer.fit(model=model, train_dataloaders=po_trainloader, val_dataloaders=validloader)

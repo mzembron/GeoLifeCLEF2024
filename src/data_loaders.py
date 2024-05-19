@@ -7,6 +7,7 @@ import pandas as pd
 
 from torchvision.io import read_image, ImageReadMode
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 from pathlib import Path
 
@@ -24,11 +25,13 @@ class MultimodalDataset(Dataset):
                  id_column='surveyId',
                  transforms=None,
                  meta_scaler_path=None,
-                 tab_scaler_path=None):
+                 tab_scaler_path=None,
+                 classes_path=None):
 
         dataset_name = '-'.join(s for i, s in enumerate(Path(metadata_path).stem.split('-')) if i in (1,3))
         csv_files = glob.glob(f'{root_dir}/{environmental_dir}/*/*{dataset_name}*.csv')
 
+        self.classes = self._load_classes(classes_path)
         self.meta_scaler_path = meta_scaler_path
         self.tab_scaler_path = tab_scaler_path
         self.metadata = self._read_metadata(metadata_path)
@@ -41,11 +44,11 @@ class MultimodalDataset(Dataset):
         self.transforms = transforms  # TODO: convert transform into separate parameters
 
     def __len__(self):
-        return len(self.tabdata)
+        return len(self.metadata)
 
     def __getitem__(self, idx):
         survey = self.metadata.iloc[idx]
-        survey_id = survey.name
+        survey_id = survey.surveyId
 
         sample = self.tabdata.loc[survey_id]
 
@@ -63,7 +66,7 @@ class MultimodalDataset(Dataset):
 
         sample_dict = {
             'survey_id': survey_id,
-            'metadata': torch.tensor(survey.drop('speciesId', errors='ignore'), dtype=torch.float),  # lat, lon, geoUncertaintyInM
+            'metadata': torch.tensor(survey.drop(['speciesId', 'surveyId'], errors='ignore'), dtype=torch.float),  # lat, lon, geoUncertaintyInM
             'image_nir': self.transforms[1](read_image(image_nir, ImageReadMode.GRAY)),
             'image_rgb': self.transforms[0](read_image(image_rgb)),
             'features': torch.tensor(sample, dtype=torch.float),  # Soilgrid [0-8], HumanFootprint[9-24], Bio [25-43], Landcover[44], Elevation[45]
@@ -79,9 +82,10 @@ class MultimodalDataset(Dataset):
     def _read_metadata(self, path):
         df = pd.read_csv(path)
         if 'speciesId' in df.columns:
-            self.classes = np.sort(np.array(df['speciesId'].unique().tolist()))
+            if self.classes is None:
+                self.classes = np.sort(np.array(df['speciesId'].unique().tolist()))
             df = (df.groupby(['surveyId', 'lat', 'lon',])
-                    .agg({'geoUncertaintyInM': 'max', 'speciesId': lambda x: x.tolist(),})
+                    .agg({'geoUncertaintyInM': 'max', 'speciesId': list,})
                     .reset_index())
         else:
             self.classes = None
@@ -89,10 +93,10 @@ class MultimodalDataset(Dataset):
                     .agg({'geoUncertaintyInM': 'max'})
                     .reset_index())
         df = df.set_index('surveyId')
-        df[df.drop(columns='speciesId', errors='ignore').columns], metadata_scaler = self._scale(df.drop(columns='speciesId', errors='ignore'), self.meta_scaler_path)
+        df[df.drop(columns='speciesId', errors='ignore').columns], metadata_scaler=self._scale(df.drop(columns='speciesId', errors='ignore'), self.meta_scaler_path)
         with open('metadata_scaler.pkl', 'wb') as f:
             pickle.dump(metadata_scaler, f)
-        return df
+        return df.reset_index()
 
     def _merge_data(self, csv_files, id_column):
         data_frames = [pd.read_csv(file).set_index(id_column) for file in csv_files]
@@ -121,6 +125,12 @@ class MultimodalDataset(Dataset):
         df = df.fillna(df.mean())
         return df, scaler
 
+    def _load_classes(self, path):
+        if path:
+            with open(path, 'rb') as f:
+                classes = pickle.load(f)
+            return classes
+
 
 def custom_collate(batch):
     dicts, tensors = zip(*batch)
@@ -145,9 +155,10 @@ def get_transforms():
 
 
 if __name__ == "__main__":
-    dataset = MultimodalDataset(transforms=get_transforms())
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0, collate_fn=custom_collate)
+    dataset = MultimodalDataset(metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train-fixed.csv',
+                                   transforms=get_transforms(),
+                                   classes_path='classes.pkl')
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=0, collate_fn=custom_collate)
 
-    for i_batch, sample_batched in enumerate(dataloader):
-        print(i_batch, sample_batched)
+    for i_batch, sample_batched in tqdm(enumerate(dataloader)):
         break
