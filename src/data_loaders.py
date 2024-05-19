@@ -26,40 +26,32 @@ class MultimodalDataset(Dataset):
                  transforms=None,
                  meta_scaler_path=None,
                  tab_scaler_path=None,
-                 classes_path=None):
+                 classes_path=None,
+                 img_only=False):
 
         dataset_name = '-'.join(s for i, s in enumerate(Path(metadata_path).stem.split('-')) if i in (1,3))
         csv_files = glob.glob(f'{root_dir}/{environmental_dir}/*/*{dataset_name}*.csv')
 
         self.classes = self._load_classes(classes_path)
         self.meta_scaler_path = meta_scaler_path
-        self.tab_scaler_path = tab_scaler_path
         self.metadata = self._read_metadata(metadata_path)
-        self.tabdata = self._merge_data(csv_files, id_column)
+
+        if not img_only:
+            self.tab_scaler_path = tab_scaler_path
+            self.tabdata = self._merge_data(csv_files, id_column)
+            self.landsat_dir = Path(glob.glob(f'{root_dir}/{landsat_dir}/cubes/*{dataset_name}*[!.zip]')[0])
+            self.biomonthly_dir = Path(glob.glob(f'{root_dir}/{biomonthly_dir}/*{dataset_name}*[!.zip]/*{dataset_name}*')[0])
 
         self.image_dirs = glob.glob(f'{root_dir}/{image_dir}/*{dataset_name[:4].upper()}{dataset_name[4:]}*/[!_]*')
-
-        self.landsat_dir = Path(glob.glob(f'{root_dir}/{landsat_dir}/cubes/*{dataset_name}*[!.zip]')[0])
-        self.biomonthly_dir = Path(glob.glob(f'{root_dir}/{biomonthly_dir}/*{dataset_name}*[!.zip]/*{dataset_name}*')[0])
         self.transforms = transforms  # TODO: convert transform into separate parameters
+        self.img_only = img_only
 
     def __len__(self):
         return len(self.metadata)
-
-    def __getitem__(self, idx):
-        survey = self.metadata.iloc[idx]
-        survey_id = survey.surveyId
-
+    
+    def _get_all_modalities(self, survey_id):
         sample = self.tabdata.loc[survey_id]
-
-        cd = str(survey_id)[-2:]
-        ab = str(survey_id)[-4:-2]
-
-        for d in self.image_dirs:
-            if d[-3:] == 'rgb':
-                image_rgb = f'{d}/{cd}/{ab}/{survey_id}.jpeg'
-            else:
-                image_nir = f'{d}/{cd}/{ab}/{survey_id}.jpeg'
+        image_rgb, image_nir = self._get_img_paths(survey_id)
 
         landsat = f'{self.landsat_dir}/{self.landsat_dir.stem}_{survey_id}_cube.pt'
         biomonthly = f'{self.biomonthly_dir}/{self.biomonthly_dir.stem}_{survey_id}_cube.pt'
@@ -73,11 +65,41 @@ class MultimodalDataset(Dataset):
             'landsat': torch.load(landsat),
             'biomonthly': torch.load(biomonthly)
         }
+
+    def _get_img_only(self, survey_id):
+        image_rgb, image_nir = self._get_img_paths(survey_id)
+
+        image_nir = read_image(image_nir, ImageReadMode.GRAY)
+        image_rgb = read_image(image_rgb)
+
+        image = torch.cat((image_rgb, image_nir))
+        image = TF.to_pil_image(image)
+
+        images = self.transforms(image)
+        return images
+
+    def _get_img_paths(self, survey_id):
+        cd = str(survey_id)[-2:]
+        ab = str(survey_id)[-4:-2]
+
+        for d in self.image_dirs:
+            if d[-3:] == 'rgb':
+                image_rgb = f'{d}/{cd}/{ab}/{survey_id}.jpeg'
+            else:
+                image_nir = f'{d}/{cd}/{ab}/{survey_id}.jpeg'
+        return image_rgb, image_nir
+
+    def __getitem__(self, idx):
+        survey = self.metadata.iloc[idx]
+        survey_id = survey.surveyId
+
+        sample = self._get_img_only(survey_id) if self.img_only else self._get_all_modalities(survey_id)
+
         if 'speciesId' in survey.index:
             classes = torch.tensor(np.isin(self.classes, np.array(survey['speciesId'])).astype(int), dtype=torch.float)
         else:
             classes = None
-        return sample_dict, classes
+        return sample, classes
 
     def _read_metadata(self, path):
         df = pd.read_csv(path)
@@ -155,10 +177,34 @@ def get_transforms():
 
 
 if __name__ == "__main__":
-    dataset = MultimodalDataset(metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train-fixed.csv',
-                                   transforms=get_transforms(),
-                                   classes_path='classes.pkl')
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=0, collate_fn=custom_collate)
+    # dataset = MultimodalDataset(metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train-fixed.csv',
+    #                                transforms=get_transforms(),
+    #                                classes_path='classes.pkl')
+    # dataloader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=0, collate_fn=custom_collate)
 
-    for i_batch, sample_batched in tqdm(enumerate(dataloader)):
+    # for i_batch, sample_batched in tqdm(enumerate(dataloader)):
+    #     break
+    from lightly.transforms.byol_transform import BYOLTransform
+    from custom_byol_transforms import BYOLView1Transform, BYOLView2Transform
+    transform = BYOLTransform(
+        view_1_transform=BYOLView1Transform(input_size=224, channels=4, random_gray_scale=0, solarization_prob=0),
+        view_2_transform=BYOLView2Transform(input_size=224, channels=4, random_gray_scale=0, solarization_prob=0),
+    )
+
+    dataset = MultimodalDataset(transforms=transform)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=4,
+        shuffle=True,
+        drop_last=True,
+        num_workers=1,
+    )
+
+    for i_batch, sample_batched in enumerate(dataloader):
+        sample_batched, classes = sample_batched
+        print(i_batch, len(sample_batched))
+        print(sample_batched[0].shape)
+        print(sample_batched[1].shape)
+        # print(type(sample_batched))
         break
