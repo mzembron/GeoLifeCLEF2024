@@ -1,7 +1,3 @@
-# Note: The model and training settings do not follow the reference settings
-# from the paper. The settings are chosen such that the example can easily be
-# run on a small dataset with a single GPU.
-
 import pytorch_lightning as pl
 import torch
 import torchvision
@@ -14,13 +10,10 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 from lightly.loss import BarlowTwinsLoss
 from lightly.models.modules import BarlowTwinsProjectionHead
-from lightly.transforms.byol_transform import (
-    BYOLTransform,
-    BYOLView1Transform,
-    BYOLView2Transform,
-)
+from lightly.transforms.byol_transform import BYOLTransform
 
-from data_loaders_ssl import MultimodalDataset
+from data_loaders import MultimodalDataset
+from custom_byol_transforms import BYOLView1Transform, BYOLView2Transform
 
 
 class BarlowTwins(pl.LightningModule):
@@ -68,14 +61,15 @@ if __name__ == "__main__":
     dataset = MultimodalDataset(
         metadata_path='data/PresenceOnlyOccurrences/GLC24-PO-metadata-train-fixed.csv',
         transforms=transform, 
-        img_only=True)
+        img_only=True,
+        from_zip=True)
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=256,
         shuffle=True,
         drop_last=True,
-        num_workers=8,
+        num_workers=1,
     )
 
     checkpoint_callback = ModelCheckpoint(
