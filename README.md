@@ -5,3 +5,10 @@ This repository contains the source code for the multimodal model used in the [G
 <div style="background-color: white; padding: 10px;">
   <img src="docs/photos/solution3.png" alt="Solution Overview">
 </div>
+
+## Solution sccore on Kaggle
+
+|                     | Score   |
+|---------------------|---------|
+| Public leaderboard  | 0.32723 |
+| Private leaderboard | 0.32825 |
