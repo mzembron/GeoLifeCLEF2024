@@ -4,7 +4,12 @@ This repository contains the source code for the multimodal model used in the [G
 
 # Solution
 
-The implemented solution consists of fusion of visual transformer and two ResNet18 architectures
+The implemented solution ([src/clef_model.py](src/clef_model.py)) consists of fusion of visual transformer and two ResNet18 architectures
+
+Each modality is processed by separate model:
+ - Visual transformer processes RGB and NIR images.
+ - ResNets extract essential information from time series.
+ - Standalone features are fed directly to the head classifier.
 
 <div style="background-color: white; padding: 10px;">
   <img src="docs/photos/solution3.png" alt="Solution Overview">
