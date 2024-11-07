@@ -11,9 +11,7 @@ Each modality is processed by separate model:
  - ResNets extract essential information from time series.
  - Standalone features are fed directly to the head classifier.
 
-<div style="background-color: white; padding: 10px;">
-  <img src="docs/photos/solution3.png" alt="Solution Overview">
-</div>
+![solution diagram](docs/photos/solution_diagram.png)
 
 
 
