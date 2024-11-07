@@ -1,7 +1,10 @@
 # GeoLifeCLEF 2024 Contest
 
-This repository contains the source code for the multimodal model used in the [GeoLifeCLEF 2024](https://www.kaggle.com/competitions/geolifeclef-2024) contest.
 
+
+
+
+This repository contains the source code for the solution to [GeoLifeCLEF 2024](https://www.kaggle.com/competitions/geolifeclef-2024)  Kaggle contest, which focuses on predicting plant species composition across space and time using a multimodal model. The challenge involves learning from a small amount of high-quality presence-absence multi-label data and a large number of presence-only single-label samples.
 ## Solution
 
 The implemented solution ([src/clef_model.py](src/clef_model.py)) consists of a fusion of a visual transformer and two ResNet18 architectures.
